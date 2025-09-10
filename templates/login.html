@@ -1,0 +1,209 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Login - RxPress</title>
+    <style>
+        body {
+            background: #f8fff8;
+            color: #222;
+            font-family: 'Segoe UI', Arial, sans-serif;
+            margin: 0;
+            padding: 0;
+        }
+        .container {
+            max-width: 400px;
+            margin: 80px auto;
+            background: #e6ffe6;
+            border-radius: 12px;
+            box-shadow: 0 2px 8px rgba(0,128,0,0.08);
+            padding: 32px;
+            text-align: center;
+        }
+        h2 {
+            color: #2ecc40;
+            margin-bottom: 1em;
+        }
+        label {
+            display: block;
+            margin: 18px 0 6px 0;
+            font-weight: 500;
+        }
+        input[type="text"], input[type="password"] {
+            width: 90%;
+            padding: 10px;
+            border: 1px solid #b2f7b2;
+            border-radius: 6px;
+            margin-bottom: 18px;
+            font-size: 1em;
+        }
+        input:disabled {
+            background-color: #f5f5f5;
+            color: #999;
+        }
+        .btn {
+            background: #2ecc40;
+            color: #fff;
+            border: none;
+            padding: 12px 32px;
+            border-radius: 6px;
+            font-size: 1.1em;
+            cursor: pointer;
+            margin-top: 1em;
+            transition: background 0.2s;
+        }
+        .btn:hover {
+            background: #27ae60;
+        }
+        .btn:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+        }
+        .generate-btn {
+            background: #27ae60;
+            color: #fff;
+            border: none;
+            padding: 8px 16px;
+            border-radius: 4px;
+            font-size: 0.9em;
+            cursor: pointer;
+            margin-left: 10px;
+        }
+        .generate-btn:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+        }
+        .error {
+            color: #e74c3c;
+            font-size: 0.9em;
+            margin-top: 5px;
+        }
+        .success {
+            color: #27ae60;
+            font-size: 0.9em;
+            margin-top: 5px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h2>Login to RxPress</h2>
+        <form method="POST" id="loginForm">
+            <label for="aadhar">Aadhar Number</label>
+            <input type="text" id="aadhar" name="aadhar" maxlength="12" pattern="\d{12}" required placeholder="Enter 12-digit Aadhar number">
+            <button type="button" class="generate-btn" id="generateOtp" disabled>Generate OTP</button>
+            <div id="aadharError" class="error"></div>
+
+            <label for="otp">OTP</label>
+            <input type="text" id="otp" name="otp" maxlength="6" pattern="\d{6}" disabled required placeholder="Enter 6-digit OTP">
+            <div id="otpError" class="error"></div>
+            <div id="otpSuccess" class="success"></div>
+
+            <button class="btn" type="submit" id="loginBtn" disabled>Login</button>
+        </form>
+    </div>
+
+    <script>
+        const aadharInput = document.getElementById('aadhar');
+        const otpInput = document.getElementById('otp');
+        const generateOtpBtn = document.getElementById('generateOtp');
+        const loginBtn = document.getElementById('loginBtn');
+        const aadharError = document.getElementById('aadharError');
+        const otpError = document.getElementById('otpError');
+        const otpSuccess = document.getElementById('otpSuccess');
+        let generatedOtp = '';
+
+        // Allow only digits in Aadhar input
+        aadharInput.addEventListener('input', function(e) {
+            e.target.value = e.target.value.replace(/\D/g, '');
+            validateAadhar();
+        });
+
+        // Allow only digits in OTP input
+        otpInput.addEventListener('input', function(e) {
+            e.target.value = e.target.value.replace(/\D/g, '');
+            validateOtp();
+        });
+
+        function validateAadhar() {
+            const aadhar = aadharInput.value;
+            if (aadhar.length === 12) {
+                generateOtpBtn.disabled = false;
+                aadharError.textContent = '';
+            } else {
+                generateOtpBtn.disabled = true;
+                otpInput.disabled = true;
+                otpInput.value = '';
+                loginBtn.disabled = true;
+                generatedOtp = '';
+                otpSuccess.textContent = '';
+                if (aadhar.length > 0 && aadhar.length !== 12) {
+                    aadharError.textContent = 'Aadhar number must be exactly 12 digits';
+                } else {
+                    aadharError.textContent = '';
+                }
+            }
+        }
+
+        function validateOtp() {
+            const otp = otpInput.value;
+            if (otp.length === 6) {
+                loginBtn.disabled = false;
+                otpError.textContent = '';
+            } else {
+                loginBtn.disabled = true;
+                if (otp.length > 0 && otp.length !== 6) {
+                    otpError.textContent = 'OTP must be exactly 6 digits';
+                } else {
+                    otpError.textContent = '';
+                }
+            }
+        }
+
+        generateOtpBtn.addEventListener('click', function() {
+            // Generate a random 6-digit OTP
+            generatedOtp = Math.floor(100000 + Math.random() * 900000).toString();
+            otpInput.disabled = false;
+            otpSuccess.textContent = `OTP generated: ${generatedOtp}`;
+
+            // Auto-focus on OTP field
+            otpInput.focus();
+
+            // Store generated OTP in a hidden input for form submission
+            let hiddenOtpInput = document.getElementById('generatedOtp');
+            if (!hiddenOtpInput) {
+                hiddenOtpInput = document.createElement('input');
+                hiddenOtpInput.type = 'hidden';
+                hiddenOtpInput.id = 'generatedOtp';
+                hiddenOtpInput.name = 'generatedOtp';
+                document.getElementById('loginForm').appendChild(hiddenOtpInput);
+            }
+            hiddenOtpInput.value = generatedOtp;
+        });
+
+        // Form validation before submission
+        document.getElementById('loginForm').addEventListener('submit', function(e) {
+            const aadhar = aadharInput.value;
+            const otp = otpInput.value;
+
+            if (aadhar.length !== 12) {
+                e.preventDefault();
+                aadharError.textContent = 'Aadhar number must be exactly 12 digits';
+                return;
+            }
+
+            if (otp.length !== 6) {
+                e.preventDefault();
+                otpError.textContent = 'OTP must be exactly 6 digits';
+                return;
+            }
+
+            if (otp !== generatedOtp) {
+                e.preventDefault();
+                otpError.textContent = 'Invalid OTP. Please enter the correct OTP.';
+                return;
+            }
+        });
+    </script>
+</body>
+</html>
