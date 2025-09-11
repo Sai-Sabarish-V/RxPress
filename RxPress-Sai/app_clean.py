@@ -7,7 +7,6 @@ from datetime import datetime, timedelta
 from typing import Optional, Dict, Any
 
 from flask import Flask, render_template, request, redirect, url_for, flash, session, jsonify
-import logging
 
 try:
     import pymysql  # Using PyMySQL for MySQL connectivity
@@ -592,6 +591,54 @@ def doctor_dashboard():
         return redirect(url_for('login'))
     prescriptions = []
     medicines = get_medicines()
+    try:
+        with get_db_connection() as conn, conn.cursor() as cur:
+            presc_table = _resolve_table_name(cur, ['prescriptions','prescription'])
+            items_table = _resolve_table_name(cur, ['prescription_items','prescription_item','presc_items'])
+            meds_table = _resolve_table_name(cur, ['medicines','medicine'])
+            patients_table = _resolve_table_name(cur, ['patients'])
+            if presc_table and items_table and meds_table and patients_table:
+                pc = _get_columns(cur, presc_table)
+                ic = _get_columns(cur, items_table)
+                mc = _get_columns(cur, meds_table)
+                ptc = _get_columns(cur, patients_table)
+                presc_id = _choose(['presc_id','id'], pc) or 'id'
+                presc_patient_id = _choose(['patient_id','pat_id'], pc) or 'patient_id'
+                presc_doctor_id = _choose(['doctor_id','doc_id'], pc) or 'doctor_id'
+                presc_status = _choose(['status','state'], pc) or 'status'
+                presc_date = _choose(['presc_date','created_at','created_on','created_date'], pc)
+                item_presc_fk = _choose(['presc_id','prescription_id'], ic) or 'presc_id'
+                item_med = _choose(['med_id','medicine_id','drug_id'], ic) or 'med_id'
+                med_id = _choose(['id','med_id','medicine_id','drug_id'], mc) or 'id'
+                med_name = 'brand_name' if 'brand_name' in mc else ('name' if 'name' in mc else None)
+                pt_id = _choose(['id','patient_id'], ptc) or 'id'
+                pt_name = _choose(['name','full_name','display_name','username'], ptc) or 'name'
+
+                cur.execute(
+                    f"SELECT p.`{presc_id}` AS id, p.`{presc_patient_id}` AS patient_id, {('p.`'+presc_date+'` AS created_date,') if presc_date else 'NULL AS created_date,'} p.`{presc_status}` AS status FROM `{presc_table}` p WHERE p.`{presc_doctor_id}`=%s ORDER BY {('p.`'+presc_date+'` DESC') if presc_date else 'p.`'+presc_id+'` DESC'} LIMIT 50",
+                    (session.get('user_id'),)
+                )
+                rows = cur.fetchall() or []
+                for r in rows:
+                    pid = r.get('id')
+                    cur.execute(f"SELECT `{pt_name}` AS name FROM `{patients_table}` WHERE `{pt_id}`=%s", (r.get('patient_id'),))
+                    patient_name = (cur.fetchone() or {}).get('name') or 'Unknown'
+                    cur.execute(
+                        f"SELECT m.`{med_name}` AS name FROM `{items_table}` i JOIN `{meds_table}` m ON m.`{med_id}`=i.`{item_med}` WHERE i.`{item_presc_fk}`=%s",
+                        (pid,)
+                    )
+                    meds_rows = cur.fetchall() or []
+                    raw_status = (r.get('status') or '').strip().lower()
+                    status_display = 'Pending' if raw_status in ('issued','pending','created','new') else 'Dispensed'
+                    prescriptions.append({
+                        'id': pid,
+                        'patient_name': patient_name,
+                        'created_date': r.get('created_date'),
+                        'medicines': ', '.join([m.get('name') for m in meds_rows if m.get('name')]),
+                        'status': status_display
+                    })
+    except Exception as e:
+        app.logger.warning(f"Doctor dashboard DB issue: {e}")
     return render_template('doctor_dashboard.html', prescriptions=prescriptions, medicines=medicines)
 
 
