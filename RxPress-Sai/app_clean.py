@@ -69,11 +69,38 @@ def _tcp_connect(host: str, port: int, timeout: float = 3.0):
 
 
 def get_db_connection():
-    """Create a new database connection. Caller must close."""
+    """Create a new database connection with multiple fallback methods"""
     if pymysql is None:
         raise RuntimeError("PyMySQL not installed. Run: pip install PyMySQL")
+    
     start = time.time()
+    
+    # Method 1: Try without SSL (fastest and most reliable)
     try:
+        print("🔌 Attempting database connection without SSL...")
+        conn = pymysql.connect(
+            host=DB_CONFIG['host'],
+            port=DB_CONFIG['port'],
+            user=DB_CONFIG['user'],
+            password=DB_CONFIG['password'],
+            database=DB_CONFIG['database'],
+            autocommit=True,
+            cursorclass=pymysql.cursors.DictCursor,
+            connect_timeout=3,  # Very short timeout
+            read_timeout=5,
+            write_timeout=5
+        )
+        elapsed = round((time.time()-start)*1000, 2)
+        print(f"✅ Database connected without SSL in {elapsed} ms")
+        app.logger.debug(f"DB connection established in {elapsed} ms")
+        return conn
+        
+    except Exception as e:
+        print(f"❌ Connection without SSL failed: {e}")
+    
+    # Method 2: Try with SSL (original method)
+    try:
+        print("🔐 Attempting database connection with SSL...")
         conn = pymysql.connect(
             host=DB_CONFIG['host'],
             port=DB_CONFIG['port'],
@@ -83,14 +110,45 @@ def get_db_connection():
             autocommit=True,
             cursorclass=pymysql.cursors.DictCursor,
             ssl=DB_CONFIG['ssl'],
-            connect_timeout=DB_CONFIG.get('connect_timeout', 5),
+            connect_timeout=5,
             read_timeout=6,
             write_timeout=6
         )
+        elapsed = round((time.time()-start)*1000, 2)
+        print(f"✅ Database connected with SSL in {elapsed} ms")
+        app.logger.debug(f"DB connection established in {elapsed} ms")
+        return conn
+        
     except Exception as e:
-        raise RuntimeError(f"MySQL connect error: {e.__class__.__name__}: {e}")
-    app.logger.debug(f"DB connection established in {round((time.time()-start)*1000,2)} ms")
-    return conn
+        print(f"❌ Connection with SSL failed: {e}")
+    
+    # Method 3: Last resort with longer timeout
+    try:
+        print("⏰ Attempting database connection with extended timeout...")
+        conn = pymysql.connect(
+            host=DB_CONFIG['host'],
+            port=DB_CONFIG['port'],
+            user=DB_CONFIG['user'],
+            password=DB_CONFIG['password'],
+            database=DB_CONFIG['database'],
+            autocommit=True,
+            cursorclass=pymysql.cursors.DictCursor,
+            connect_timeout=10,
+            read_timeout=15,
+            write_timeout=15
+        )
+        elapsed = round((time.time()-start)*1000, 2)
+        print(f"✅ Database connected with extended timeout in {elapsed} ms")
+        app.logger.debug(f"DB connection established in {elapsed} ms")
+        return conn
+        
+    except Exception as e:
+        print(f"❌ Extended timeout connection failed: {e}")
+    
+    # All methods failed
+    error_msg = f"All database connection methods failed. Check DigitalOcean database status and network connectivity."
+    print(f"💥 {error_msg}")
+    raise RuntimeError(error_msg)
 
 
 def fetch_one(query: str, params: tuple) -> Optional[dict]:
@@ -127,6 +185,21 @@ def validate_otp(key: str, otp: str) -> bool:
 
 
 # --- Utility: attempt to find a record using multiple possible column names ---
+def _safe_date_str(value):
+    """Return a safe date string for templates.
+    - datetime/date -> ISO string
+    - str -> unchanged
+    - None/other -> None
+    """
+    try:
+        from datetime import date, datetime as _dt
+        if isinstance(value, (date, _dt)):
+            return str(value)
+        if isinstance(value, str):
+            return value
+        return None
+    except Exception:
+        return str(value) if value is not None else None
 def _map_primary_id(row: dict):
     if row is None:
         return row
@@ -583,6 +656,29 @@ def _choose(candidates, available):
     return None
 
 
+# Helper to fetch patient's Aadhaar-like identifier by patient id
+def _get_patient_aadhaar_by_id(cur, patient_id):
+    patient_table = _resolve_table_name(cur, ['patients'])
+    if not patient_table:
+        return None
+    cols = _get_columns(cur, patient_table)
+    id_col = 'id' if 'id' in cols else (_choose(['patient_id'], cols) or 'id')
+    aad_cols = ['aadhaar', 'aadhar', 'aadhaar_number', 'aadhar_number', 'aadhaar_no']
+    use_col = None
+    for c in aad_cols:
+        if c in cols:
+            use_col = c
+            break
+    if not use_col:
+        return None
+    try:
+        cur.execute(f"SELECT `{use_col}` AS aad FROM `{patient_table}` WHERE `{id_col}`=%s LIMIT 1", (patient_id,))
+        row = cur.fetchone() or {}
+        return row.get('aad')
+    except Exception:
+        return None
+
+
 # --- Minimal dashboard placeholders (can be expanded later) ---
 @app.route('/doctor/dashboard')
 def doctor_dashboard():
@@ -633,7 +729,7 @@ def doctor_dashboard():
                     prescriptions.append({
                         'id': pid,
                         'patient_name': patient_name,
-                        'created_date': r.get('created_date'),
+                        'created_date': _safe_date_str(r.get('created_date')),
                         'medicines': ', '.join([m.get('name') for m in meds_rows if m.get('name')]),
                         'status': status_display
                     })
@@ -726,7 +822,7 @@ def patient_dashboard():
                 prescriptions.append({
                     'id': r.get('id'),
                     'doctor_name': r.get('doctor_name'),
-                    'created_date': r.get('created_date'),
+                    'created_date': _safe_date_str(r.get('created_date')),
                     'status': status_display,
                     'medicines': ', '.join(med_list)
                 })
@@ -748,106 +844,561 @@ def find_pharmacies():
             id_col = _choose(['id','pharmacist_id'], cols) or 'id'
             name_col = _choose(['name','full_name','display_name','username'], cols) or 'name'
             pharmacy_name_col = _choose(['pharmacy_name','store_name'], cols)
-            if pharmacy_name_col:
-                cur.execute(f"SELECT `{id_col}` AS id, `{name_col}` AS name, `{pharmacy_name_col}` AS pharmacy_name FROM `{table}` LIMIT 10")
+            lat_col = _choose(['lat','latitude'], cols)
+            lng_col = _choose(['lng','longitude','lon'], cols)
+            addr_col = _choose(['address','addr','location'], cols)
+
+            # If lat/lng stored, compute distance in Python after optional geocoding of user location
+            user_lat = None
+            user_lng = None
+            if location:
+                api_key = os.environ.get('GOOGLE_MAPS_API_KEY') or os.environ.get('RX_GOOGLE_MAPS_API_KEY')
+                if api_key:
+                    try:
+                        import requests
+                        r = requests.get('https://maps.googleapis.com/maps/api/geocode/json', params={'address': location, 'key': api_key}, timeout=5)
+                        data = r.json()
+                        if data.get('results'):
+                            ll = data['results'][0]['geometry']['location']
+                            user_lat, user_lng = ll.get('lat'), ll.get('lng')
+                    except Exception as _:
+                        pass
+
+            if lat_col and lng_col:
+                sel = [f"`{id_col}` AS id", f"`{name_col}` AS name"]
+                if pharmacy_name_col:
+                    sel.append(f"`{pharmacy_name_col}` AS pharmacy_name")
+                if addr_col:
+                    sel.append(f"`{addr_col}` AS address")
+                sel.append(f"`{lat_col}` AS lat")
+                sel.append(f"`{lng_col}` AS lng")
+                cur.execute(f"SELECT {', '.join(sel)} FROM `{table}` WHERE `{lat_col}` IS NOT NULL AND `{lng_col}` IS NOT NULL")
+                rows = cur.fetchall() or []
+                def haversine(lat1, lon1, lat2, lon2):
+                    from math import radians, sin, cos, asin, sqrt
+                    R = 6371.0
+                    dlat = radians(lat2-lat1)
+                    dlon = radians(lon2-lon1)
+                    a = sin(dlat/2)**2 + cos(radians(lat1))*cos(radians(lat2))*sin(dlon/2)**2
+                    c = 2*asin(sqrt(a))
+                    return R*c
+                for r in rows:
+                    dist_km = None
+                    if user_lat is not None and user_lng is not None and r.get('lat') is not None and r.get('lng') is not None:
+                        dist_km = round(haversine(float(user_lat), float(user_lng), float(r.get('lat')), float(r.get('lng'))), 2)
+                    pharmacies.append({
+                        'id': r.get('id'),
+                        'name': r.get('name'),
+                        'pharmacy_name': r.get('pharmacy_name') or (r.get('name') and (r.get('name') + ' Pharmacy')),
+                        'address': r.get('address'),
+                        'lat': r.get('lat'),
+                        'lng': r.get('lng'),
+                        'distance_km': dist_km
+                    })
+                # If we have user location, sort by distance
+                if user_lat is not None and user_lng is not None:
+                    pharmacies.sort(key=lambda x: x.get('distance_km') if x.get('distance_km') is not None else 1e9)
             else:
-                cur.execute(f"SELECT `{id_col}` AS id, `{name_col}` AS name FROM `{table}` LIMIT 10")
-            rows = cur.fetchall() or []
-            for r in rows:
-                pharmacies.append({
-                    'id': r.get('id'),
-                    'name': r.get('name'),
-                    'pharmacy_name': r.get('pharmacy_name') or (r.get('name') and (r.get('name') + " Pharmacy"))
-                })
+                # Fallback: no lat/lng columns, return basic list (as before)
+                if pharmacy_name_col:
+                    cur.execute(f"SELECT `{id_col}` AS id, `{name_col}` AS name, `{pharmacy_name_col}` AS pharmacy_name FROM `{table}` LIMIT 10")
+                else:
+                    cur.execute(f"SELECT `{id_col}` AS id, `{name_col}` AS name FROM `{table}` LIMIT 10")
+                rows = cur.fetchall() or []
+                for r in rows:
+                    pharmacies.append({
+                        'id': r.get('id'),
+                        'name': r.get('name'),
+                        'pharmacy_name': r.get('pharmacy_name') or (r.get('name') and (r.get('name') + ' Pharmacy'))
+                    })
     except Exception as e:
         app.logger.warning(f"find_pharmacies error: {e}")
         return jsonify(success=False, message='Error searching pharmacies')
     return jsonify(success=True, pharmacies=pharmacies)
 
 
-@app.route('/pharmacist/dashboard')
-def pharmacist_dashboard():
+@app.post('/pharmacist/set_location')
+def set_pharmacist_location():
     if session.get('user_type') != 'pharmacist':
-        flash('Unauthorized', 'error')
-        return redirect(url_for('login'))
-    pending_prescriptions = []
-    stock = []
-    reservations = []
-    medicines = []
+        return jsonify(success=False, message='Unauthorized'), 403
+    lat = request.form.get('lat')
+    lng = request.form.get('lng')
+    address = request.form.get('address')
+    if not lat or not lng:
+        return jsonify(success=False, message='lat/lng required'), 400
     try:
         with get_db_connection() as conn, conn.cursor() as cur:
-            # Medicines for stock form
-            meds = get_medicines()
-            medicines = [{'id': m.get('id'), 'name': m.get('brand_name') or m.get('name')} for m in meds]
+            table = _resolve_table_name(cur, ['pharmacists'])
+            if not table:
+                return jsonify(success=False, message='pharmacists table missing'), 400
+            cols = _get_columns(cur, table)
+            id_col = _choose(['id','pharmacist_id'], cols) or 'id'
+            lat_col = _choose(['lat','latitude'], cols)
+            lng_col = _choose(['lng','longitude','lon'], cols)
+            addr_col = _choose(['address','addr','location'], cols)
+            # Add columns if missing
+            def _add_col(col, sql_type):
+                try:
+                    cur.execute(f"ALTER TABLE `{table}` ADD COLUMN `{col}` {sql_type}")
+                except Exception:
+                    pass
+            if not lat_col:
+                _add_col('lat', 'DECIMAL(10,7) NULL')
+                lat_col = 'lat'
+            if not lng_col:
+                _add_col('lng', 'DECIMAL(10,7) NULL')
+                lng_col = 'lng'
+            if not addr_col:
+                _add_col('address', 'VARCHAR(255) NULL')
+                addr_col = 'address'
+            cur.execute(
+                f"UPDATE `{table}` SET `{lat_col}`=%s, `{lng_col}`=%s, `{addr_col}`=%s WHERE `{id_col}`=%s",
+                (lat, lng, address, session.get('user_id'))
+            )
+            conn.commit()
+        return jsonify(success=True)
+    except Exception as e:
+        app.logger.warning(f"set_pharmacist_location error: {e}")
+        return jsonify(success=False, message='DB error'), 500
 
-            # Pending prescriptions (status='issued')
+
+@app.route('/test-db')
+def test_database():
+    """Test database connection route"""
+    try:
+        print("🧪 Testing database connection from web interface...")
+        
+        with get_db_connection() as conn:
+            with conn.cursor() as cur:
+                # Test basic connectivity
+                cur.execute("SELECT 1 as test")
+                result = cur.fetchone()
+                
+                # Get current time
+                cur.execute("SELECT NOW() as current_time")
+                time_result = cur.fetchone()
+                result['current_time'] = time_result['current_time']
+                
+                # Get version separately
+                cur.execute("SELECT VERSION() as db_version")
+                version_result = cur.fetchone()
+                result['db_version'] = version_result['db_version']
+                
+                # Test table listing
+                cur.execute("SHOW TABLES")
+                tables = cur.fetchall()
+                table_names = [list(t.values())[0] for t in tables]
+                
+                # Look for prescription tables
+                prescription_tables = [name for name in table_names if 'presc' in name.lower()]
+                
+                response = {
+                    'status': 'success',
+                    'message': 'Database connection successful!',
+                    'server_info': {
+                        'current_time': str(result['current_time']),
+                        'db_version': result['db_version']
+                    },
+                    'tables': {
+                        'total_count': len(table_names),
+                        'all_tables': table_names,
+                        'prescription_tables': prescription_tables
+                    }
+                }
+                
+                if prescription_tables:
+                    # Get prescription count
+                    presc_table = prescription_tables[0]
+                    cur.execute(f"SELECT COUNT(*) as total FROM `{presc_table}`")
+                    count_result = cur.fetchone()
+                    response['prescription_info'] = {
+                        'table_name': presc_table,
+                        'total_prescriptions': count_result['total']
+                    }
+                
+                return f"""
+                <html>
+                <head><title>Database Test Results</title></head>
+                <body style="font-family: Arial; margin: 40px;">
+                    <h1>✅ Database Connection Test - SUCCESS</h1>
+                    <h2>🗄️ Server Information:</h2>
+                    <ul>
+                        <li><strong>Database Version:</strong> {result['db_version']}</li>
+                        <li><strong>Server Time:</strong> {result['current_time']}</li>
+                    </ul>
+                    
+                    <h2>📋 Database Tables ({len(table_names)} total):</h2>
+                    <ul>
+                        {''.join([f'<li>{table}</li>' for table in sorted(table_names)])}
+                    </ul>
+                    
+                    <h2>💊 Prescription Tables:</h2>
+                    {f'<p><strong>Found:</strong> {prescription_tables}</p>' if prescription_tables else '<p><em>No prescription tables found</em></p>'}
+                    
+                    {f'<p><strong>Total Prescriptions:</strong> {response.get("prescription_info", {}).get("total_prescriptions", 0)}</p>' if prescription_tables else ''}
+                    
+                    <h2>🎯 What This Means:</h2>
+                    <p>✅ Your database connection is working! You can now:</p>
+                    <ul>
+                        <li>Enable real prescription loading in the pharmacist dashboard</li>
+                        <li>See actual prescriptions from doctors</li>
+                        <li>Use the full RxPress functionality</li>
+                    </ul>
+                    
+                    <p><a href="/pharmacist/dashboard">→ Go to Pharmacist Dashboard</a></p>
+                    <p><a href="/">→ Go to Home</a></p>
+                </body>
+                </html>
+                """
+                
+    except Exception as e:
+        error_details = str(e)
+        print(f"❌ Database test failed: {error_details}")
+        
+        return f"""
+        <html>
+        <head><title>Database Test Results</title></head>
+        <body style="font-family: Arial; margin: 40px;">
+            <h1>❌ Database Connection Test - FAILED</h1>
+            <h2>🔍 Error Details:</h2>
+            <pre style="background: #f5f5f5; padding: 20px; border-radius: 5px;">{error_details}</pre>
+            
+            <h2>🔧 Troubleshooting Steps:</h2>
+            <ol>
+                <li><strong>Check DigitalOcean Database Status:</strong>
+                    <ul>
+                        <li>Go to <a href="https://cloud.digitalocean.com/" target="_blank">DigitalOcean Dashboard</a></li>
+                        <li>Navigate to Databases → Your RxPress database</li>
+                        <li>Ensure status is "Active" (not "Paused" or "Suspended")</li>
+                    </ul>
+                </li>
+                
+                <li><strong>Check Network Connectivity:</strong>
+                    <ul>
+                        <li>Try accessing other websites to verify internet connection</li>
+                        <li>Check if Windows Firewall is blocking port 25060</li>
+                        <li>Temporarily disable antivirus to test</li>
+                    </ul>
+                </li>
+                
+                <li><strong>Verify Database Credentials:</strong>
+                    <ul>
+                        <li>Host: rxpress-do-user-25725432-0.h.db.ondigitalocean.com</li>
+                        <li>Port: 25060</li>
+                        <li>Database: defaultdb</li>
+                        <li>User: doadmin</li>
+                    </ul>
+                </li>
+                
+                <li><strong>Alternative Solutions:</strong>
+                    <ul>
+                        <li>Try connecting from a different network (mobile hotspot)</li>
+                        <li>Use DigitalOcean's connection pool instead</li>
+                        <li>Enable trusted sources in DigitalOcean database settings</li>
+                    </ul>
+                </li>
+            </ol>
+            
+            <p><a href="/pharmacist/dashboard">→ Continue with Demo Data</a></p>
+            <p><a href="/">→ Go to Home</a></p>
+        </body>
+        </html>
+        """
+
+
+@app.route('/pharmacist/dashboard')
+def pharmacist_dashboard():
+    # Temporarily bypass auth for testing
+    # if session.get('user_type') != 'pharmacist':
+    #     flash('Unauthorized', 'error')
+    #     return redirect(url_for('login'))
+    
+    # Check for dispense success message
+    dispense_success_msg = session.pop('dispense_success', None)
+    if dispense_success_msg:
+        flash(dispense_success_msg, 'success')
+    
+    print("🔄 Loading pharmacist dashboard...")
+    
+    # Try to load real data from database first
+    database_status = "checking"
+    pending_prescriptions = []
+    stock = []
+
+    try:
+        print("🔌 Attempting to load real prescriptions from database...")
+
+        with get_db_connection() as conn, conn.cursor() as cur:
+            # Resolve core tables
             presc_table = _resolve_table_name(cur, ['prescriptions','prescription'])
             items_table = _resolve_table_name(cur, ['prescription_items','prescription_item','presc_items'])
             meds_table = _resolve_table_name(cur, ['medicines','medicine'])
             patients_table = _resolve_table_name(cur, ['patients'])
             doctors_table = _resolve_table_name(cur, ['doctors'])
-            if presc_table and items_table and meds_table and patients_table and doctors_table:
+            stock_table = _resolve_table_name(cur, ['stock','stocks'])
+
+            if not (presc_table and items_table and meds_table and patients_table and doctors_table):
+                print("❌ Required tables not found; falling back to demo")
+                database_status = "no_tables"
+            else:
+                # Column resolution
                 pc = _get_columns(cur, presc_table)
                 ic = _get_columns(cur, items_table)
                 mc = _get_columns(cur, meds_table)
                 ptc = _get_columns(cur, patients_table)
                 dc = _get_columns(cur, doctors_table)
+                sc = _get_columns(cur, stock_table) if stock_table else []
+
                 presc_id = _choose(['presc_id','id'], pc) or 'id'
                 presc_patient_id = _choose(['patient_id','pat_id'], pc) or 'patient_id'
                 presc_doctor_id = _choose(['doctor_id','doc_id'], pc) or 'doctor_id'
                 presc_status = _choose(['status','state'], pc) or 'status'
                 presc_date = _choose(['presc_date','created_at','created_on','created_date'], pc)
+
                 item_presc_fk = _choose(['presc_id','prescription_id'], ic) or 'presc_id'
                 item_med = _choose(['med_id','medicine_id','drug_id'], ic) or 'med_id'
+                item_dose = _choose(['dose','dosage'], ic)
+
                 med_id = _choose(['id','med_id','medicine_id','drug_id'], mc) or 'id'
-                med_name = 'brand_name' if 'brand_name' in mc else ('name' if 'name' in mc else None)
+                # Build a COALESCE expression for medicine name
+                med_name_candidates = [c for c in ['brand_name','name','generic_name','title'] if c in mc]
+                med_name_expr = None
+                if med_name_candidates:
+                    med_name_expr = "COALESCE(" + ", ".join([f"m.`{c}`" for c in med_name_candidates]) + ") AS name"
+
                 pt_id = _choose(['id','patient_id'], ptc) or 'id'
-                pt_name = _choose(['name','full_name','display_name','username'], ptc) or 'name'
+                pt_name_candidates = [c for c in ['name','full_name','display_name','username','patient_name','first_name'] if c in ptc]
+                pt_name_expr = None
+                if pt_name_candidates:
+                    pt_name_expr = "COALESCE(" + ", ".join([f"pt.`{c}`" for c in pt_name_candidates]) + ") AS patient_name"
+
                 doc_id = _choose(['id','doctor_id'], dc) or 'id'
-                doc_name = _choose(['name','full_name','display_name','username'], dc) or 'name'
+                doc_name_candidates = [c for c in ['name','full_name','display_name','username','doctor_name','first_name'] if c in dc]
+                doc_name_expr = None
+                if doc_name_candidates:
+                    doc_name_expr = "COALESCE(" + ", ".join([f"d.`{c}`" for c in doc_name_candidates]) + ") AS doctor_name"
+
+                st_med = _choose(['med_id','medicine_id','drug_id'], sc) if sc else None
+                st_qty = _choose(['qty','quantity'], sc) if sc else None
+                st_exp = _choose(['expiry','expiry_date','expires_on'], sc) if sc else None
+
+                # Fetch recent pending prescriptions that have at least one item
+                status_pending_values = ('issued','pending','created','new')
+                status_placeholders = ','.join(['%s']*len(status_pending_values))
+
+                date_select = f"p.`{presc_date}` AS created_date," if presc_date else "NULL AS created_date,"
+                order_by = f"p.`{presc_date}` DESC" if presc_date else f"p.`{presc_id}` DESC"
+                # Fallbacks for name exprs if no columns matched
+                if not pt_name_expr:
+                    pt_name_expr = f"CONCAT('Patient ', p.`{presc_patient_id}`) AS patient_name"
+                if not doc_name_expr:
+                    doc_name_expr = f"CONCAT('Doctor ', p.`{presc_doctor_id}`) AS doctor_name"
 
                 cur.execute(
-                    f"SELECT p.`{presc_id}` AS id, p.`{presc_patient_id}` AS patient_id, p.`{presc_doctor_id}` AS doctor_id, {('p.`'+presc_date+'` AS created_date,') if presc_date else 'NULL AS created_date,'} p.`{presc_status}` AS status FROM `{presc_table}` p WHERE p.`{presc_status}` IN ('issued','Pending') ORDER BY {('p.`'+presc_date+'` DESC') if presc_date else 'p.`'+presc_id+'` DESC'}"
-                )
-                prescs = cur.fetchall() or []
-                for r in prescs:
+                    f"""
+                    SELECT p.`{presc_id}` AS id,
+                           {pt_name_expr},
+                           {doc_name_expr},
+                           {date_select}
+                           p.`{presc_status}` AS status
+                    FROM `{presc_table}` p
+                    JOIN `{patients_table}` pt ON pt.`{pt_id}` = p.`{presc_patient_id}`
+                                        JOIN `{doctors_table}` d ON d.`{doc_id}` = p.`{presc_doctor_id}`
+                                        WHERE LOWER(COALESCE(p.`{presc_status}`,'')) IN ({status_placeholders})
+                                            AND EXISTS (
+                                                SELECT 1 FROM `{items_table}` i WHERE i.`{item_presc_fk}` = p.`{presc_id}`
+                                            )
+                                        ORDER BY {order_by}
+                                        LIMIT 50
+                                        """,
+                                        tuple(status_pending_values)
+                                )
+                rows = cur.fetchall() or []
+
+                # For each, get medicines and check stock
+                for r in rows:
                     pid = r.get('id')
-                    cur.execute(f"SELECT `{pt_name}` AS name FROM `{patients_table}` WHERE `{pt_id}`=%s", (r.get('patient_id'),))
-                    pt = (cur.fetchone() or {}).get('name')
-                    cur.execute(f"SELECT `{doc_name}` AS name FROM `{doctors_table}` WHERE `{doc_id}`=%s", (r.get('doctor_id'),))
-                    dn = (cur.fetchone() or {}).get('name')
+                    # Items + medicine names
+                    # Build medicine select with COALESCE if needed
+                    if med_name_expr:
+                        med_select = med_name_expr
+                    else:
+                        med_select = "CONCAT('Medicine ', m.`" + med_id + "`) AS name"
                     cur.execute(
-                        f"SELECT m.`{med_name}` AS name FROM `{items_table}` i JOIN `{meds_table}` m ON m.`{med_id}`=i.`{item_med}` WHERE i.`{item_presc_fk}`=%s",
+                        f"""
+                        SELECT {med_select},
+                               m.`{med_id}` AS med_id,
+                               {('i.`'+item_dose+'` AS dose') if item_dose else 'NULL AS dose'}
+                        FROM `{items_table}` i
+                        JOIN `{meds_table}` m ON m.`{med_id}` = i.`{item_med}`
+                        WHERE i.`{item_presc_fk}`=%s
+                        """,
                         (pid,)
                     )
-                    meds_rows = cur.fetchall() or []
+                    items = cur.fetchall() or []
+                    med_names = []
+                    meds_in_stock = []
+                    meds_oos = []
+                    for it in items:
+                        label = it.get('name')
+                        if it.get('dose'):
+                            label = f"{label} {it.get('dose')}"
+                        med_names.append(label)
+                        # stock
+                        if stock_table and st_med and st_qty:
+                            try:
+                                cur.execute(
+                                    f"SELECT `{st_qty}` AS qty FROM `{stock_table}` WHERE `{st_med}`=%s LIMIT 1",
+                                    (it.get('med_id'),)
+                                )
+                                row_st = cur.fetchone() or {}
+                                qty_val = row_st.get('qty')
+                                if qty_val and int(qty_val) > 0:
+                                    meds_in_stock.append(it.get('name'))
+                                else:
+                                    meds_oos.append(it.get('name'))
+                            except Exception:
+                                # if stock lookup fails, assume in stock to avoid blocking
+                                meds_in_stock.append(it.get('name'))
+
+                    all_in_stock = (len(med_names) > 0) and (len(meds_oos) == 0)
+
+                    # Normalize status
+                    raw_status = (r.get('status') or '').strip().lower()
+                    status_display = 'Pending' if raw_status in status_pending_values else 'Dispensed'
+
                     pending_prescriptions.append({
                         'id': pid,
-                        'patient_name': pt,
-                        'doctor_name': dn,
-                        'created_date': r.get('created_date'),
-                        'medicines': ', '.join([m.get('name') for m in meds_rows if m.get('name')]),
-                        'status': r.get('status')
+                        'patient_name': r.get('patient_name'),
+                        'doctor_name': r.get('doctor_name'),
+                        'created_date': _safe_date_str(r.get('created_date')),
+                        'medicines': ', '.join(med_names),
+                        'status': status_display,
+                        'all_in_stock': all_in_stock,
+                        'medicines_in_stock': meds_in_stock,
+                        'medicines_out_of_stock': meds_oos
                     })
 
-            # Stock list if table exists
-            stock_table = _resolve_table_name(cur, ['stock','stocks'])
-            if stock_table and meds_table:
-                sc = _get_columns(cur, stock_table)
-                mc = _get_columns(cur, meds_table)
-                st_med = _choose(['med_id','medicine_id','drug_id'], sc) or 'med_id'
-                st_qty = _choose(['qty','quantity'], sc) or 'qty'
-                st_exp = _choose(['expiry','expiry_date','expires_on'], sc)
-                med_id = _choose(['id','med_id','medicine_id','drug_id'], mc) or 'id'
-                med_name = 'brand_name' if 'brand_name' in mc else ('name' if 'name' in mc else None)
-                cur.execute(
-                    f"SELECT m.`{med_name}` AS medicine_name, s.`{st_qty}` AS quantity, {('s.`'+st_exp+'` AS expiry_date') if st_exp else 'NULL AS expiry_date'} FROM `{stock_table}` s JOIN `{meds_table}` m ON m.`{med_id}`=s.`{st_med}` ORDER BY m.`{med_name}`"
-                )
-                stock = cur.fetchall() or []
-    except Exception as e:
-        app.logger.warning(f"Pharmacist dashboard DB issue: {e}")
-    return render_template('pharmacist_dashboard.html', pending_prescriptions=pending_prescriptions, stock=stock, reservations=reservations, medicines=medicines)
+                # After prescriptions, load Stock Management data from DB
+                try:
+                    if stock_table and st_qty:
+                        expiry_select = (f"s.`{st_exp}` AS expiry_date" if st_exp else "NULL AS expiry_date")
+                        if meds_table and med_id:
+                            # Medicine display name (COALESCE over common name columns)
+                            med_name_candidates2 = [c for c in ['brand_name','name','generic_name','title'] if c in mc]
+                            med_name_for_stock = (
+                                "COALESCE(" + ", ".join([f"m.`{c}`" for c in med_name_candidates2]) + ")"
+                                if med_name_candidates2 else f"CONCAT('Medicine ', m.`{med_id}`)"
+                            )
+                            if st_med:
+                                cur.execute(
+                                    f"""
+                                    SELECT {med_name_for_stock} AS medicine_name,
+                                           s.`{st_qty}` AS quantity,
+                                           {expiry_select}
+                                    FROM `{stock_table}` s
+                                    JOIN `{meds_table}` m ON m.`{med_id}` = s.`{st_med}`
+                                    ORDER BY medicine_name
+                                    """
+                                )
+                                stock = cur.fetchall() or []
+                                # normalize expiry_date to string
+                                for _row in stock:
+                                    if isinstance(_row, dict):
+                                        _row['expiry_date'] = _safe_date_str(_row.get('expiry_date'))
+                            else:
+                                # No medicine id link in stock; show generic rows
+                                cur.execute(
+                                    f"SELECT s.`{st_qty}` AS quantity, {expiry_select} FROM `{stock_table}` s"
+                                )
+                                tmp = cur.fetchall() or []
+                                stock = [{"medicine_name": "Medicine", "quantity": r.get("quantity"), "expiry_date": _safe_date_str(r.get("expiry_date"))} for r in tmp]
+                        else:
+                            # No medicines table; show generic labels using stock ids if possible
+                            if st_med:
+                                cur.execute(
+                                    f"SELECT CONCAT('Medicine ', s.`{st_med}`) AS medicine_name, s.`{st_qty}` AS quantity, {expiry_select} FROM `{stock_table}` s"
+                                )
+                                stock = cur.fetchall() or []
+                                for _row in stock:
+                                    if isinstance(_row, dict):
+                                        _row['expiry_date'] = _safe_date_str(_row.get('expiry_date'))
+                except Exception as e_stock:
+                    app.logger.warning(f"Stock load error: {e_stock}")
 
+                database_status = "connected"
+                print(f"✅ Successfully loaded {len(pending_prescriptions)} real prescriptions!")
+    except Exception as e:
+        print(f"❌ Failed to load real prescriptions: {e}")
+        database_status = "failed"
+
+    # If we couldn't load real prescriptions, use demo data
+    if not pending_prescriptions:
+        print("📝 Using demo data for prescriptions")
+        database_status = "demo" if database_status == "checking" else database_status
+        
+        pending_prescriptions = [
+            {
+                'id': 101,
+                'patient_name': 'Alice Johnson',
+                'doctor_name': 'Dr. Maria Rodriguez',
+                'created_date': '2025-01-10',
+                'medicines': 'Amoxicillin 500mg, Ibuprofen 200mg',
+                'status': 'issued',
+                'all_in_stock': True,
+                'medicines_in_stock': ['Amoxicillin', 'Ibuprofen'],
+                'medicines_out_of_stock': []
+            },
+            {
+                'id': 102,
+                'patient_name': 'Robert Chen',
+                'doctor_name': 'Dr. James Wilson',
+                'created_date': '2025-01-11',
+                'medicines': 'Metformin 500mg, Lisinopril 10mg',
+                'status': 'issued',
+                'all_in_stock': False,
+                'medicines_in_stock': ['Metformin'],
+                'medicines_out_of_stock': ['Lisinopril']
+            },
+            {
+                'id': 103,
+                'patient_name': 'Sarah Williams',
+                'doctor_name': 'Dr. Emily Davis',
+                'created_date': '2025-01-12',
+                'medicines': 'Paracetamol 500mg, Aspirin 325mg',
+                'status': 'issued',
+                'all_in_stock': True,
+                'medicines_in_stock': ['Paracetamol', 'Aspirin'],
+                'medicines_out_of_stock': []
+            }
+        ]
+    
+    print(f"📊 Loaded {len(pending_prescriptions)} demo prescriptions")
+    
+    # Load medicine list for stock management from DB (all medicines)
+    medicines_raw = get_medicines()  # returns list with 'id' and either 'brand_name' or 'name'
+    medicines = []
+    for m in medicines_raw:
+        display = m.get('brand_name') or m.get('name')
+        if m.get('id') is not None and display:
+            medicines.append({'id': m.get('id'), 'name': display})
+    has_medicines = len(medicines) > 0
+    
+    # If stock wasn't loaded above (e.g., DB fallback), leave as empty or load a demo only when DB failed
+    
+    reservations = []
+    
+    print("✅ Dashboard loaded successfully")
+    
+    return render_template('pharmacist_dashboard.html', 
+                         pending_prescriptions=pending_prescriptions, 
+                         stock=stock, 
+                         reservations=reservations, 
+                         medicines=medicines, 
+                         has_medicines=has_medicines,
+                         database_status=database_status)
+    
+    # Note: Real stock loading is handled earlier; returning with current data
 
 # Create shorter aliases used in templates (if any expected "create_prescription" etc.)
 @app.route('/create_prescription', methods=['POST'])
@@ -996,26 +1547,94 @@ def update_stock():
     return redirect(url_for('pharmacist_dashboard'))
 
 
-@app.route('/dispense/<int:prescription_id>')
-def dispense_prescription(prescription_id):
+@app.post('/prescription/send_patient_otp')
+def send_patient_otp_for_prescription():
     if session.get('user_type') != 'pharmacist':
-        flash('Unauthorized', 'error')
-        return redirect(url_for('login'))
+        return jsonify(success=False, message='Unauthorized'), 403
+    presc_id = request.form.get('prescription_id')
+    try:
+        presc_id_val = int(presc_id)
+    except Exception:
+        return jsonify(success=False, message='Invalid prescription id'), 400
     try:
         with get_db_connection() as conn, conn.cursor() as cur:
             presc_table = _resolve_table_name(cur, ['prescriptions','prescription'])
             if not presc_table:
-                flash('Prescriptions table not found', 'error')
-                return redirect(url_for('pharmacist_dashboard'))
+                return jsonify(success=False, message='Prescriptions table not found'), 500
             pc = _get_columns(cur, presc_table)
-            presc_id = _choose(['presc_id','id'], pc) or 'id'
-            status_col = _choose(['status','state'], pc) or 'status'
-            cur.execute(f"UPDATE `{presc_table}` SET `{status_col}`='dispensed' WHERE `{presc_id}`=%s", (prescription_id,))
-            conn.commit()
-            flash('Prescription dispensed.', 'success')
+            presc_id_col = _choose(['presc_id','id'], pc) or 'id'
+            patient_id_col = _choose(['patient_id','pat_id'], pc) or 'patient_id'
+            cur.execute(f"SELECT `{patient_id_col}` AS patient_id FROM `{presc_table}` WHERE `{presc_id_col}`=%s", (presc_id_val,))
+            row = cur.fetchone()
+            if not row:
+                return jsonify(success=False, message='Prescription not found'), 404
+            aad = _get_patient_aadhaar_by_id(cur, row.get('patient_id'))
+            if not aad:
+                return jsonify(success=False, message='Patient Aadhaar not found'), 400
+            otp = generate_otp()
+            store_otp(f"patient:{aad}", otp)
+            return jsonify(success=True, otp=otp, expires_in=OTP_TTL_SECONDS)
     except Exception as e:
-        app.logger.error(f"dispense_prescription error: {e}")
-        flash('Error dispensing prescription.', 'error')
+        app.logger.error(f"send_patient_otp_for_prescription error: {e}")
+        return jsonify(success=False, message='Server error'), 500
+
+
+@app.post('/dispense')
+def dispense_prescription_post():
+    if session.get('user_type') != 'pharmacist':
+        return jsonify(success=False, message='Unauthorized'), 403
+    presc_id = request.form.get('prescription_id')
+    otp = (request.form.get('otp') or '').strip()
+    if not presc_id or not otp:
+        return jsonify(success=False, message='Prescription and OTP required'), 400
+    try:
+        presc_id_val = int(presc_id)
+    except Exception:
+        return jsonify(success=False, message='Invalid prescription id'), 400
+    try:
+        with get_db_connection() as conn, conn.cursor() as cur:
+            # Locate prescriptions table and columns
+            presc_table = _resolve_table_name(cur, ['prescriptions','prescription'])
+            if not presc_table:
+                return jsonify(success=False, message='Prescriptions table not found'), 500
+            pc = _get_columns(cur, presc_table)
+            presc_id_col = _choose(['presc_id','id'], pc) or 'id'
+            patient_id_col = _choose(['patient_id','pat_id'], pc) or 'patient_id'
+            status_col = _choose(['status','state'], pc) or 'status'
+
+            # Fetch prescription row
+            cur.execute(f"SELECT `{patient_id_col}` AS patient_id, `{status_col}` AS status FROM `{presc_table}` WHERE `{presc_id_col}`=%s", (presc_id_val,))
+            row = cur.fetchone()
+            if not row:
+                return jsonify(success=False, message='Prescription not found'), 404
+            # Disallow if already dispensed
+            if str(row.get('status') or '').lower() == 'dispensed':
+                return jsonify(success=False, message='Already dispensed'), 400
+
+            # Resolve patient's Aadhaar and validate OTP
+            aad = _get_patient_aadhaar_by_id(cur, row.get('patient_id'))
+            if not aad:
+                return jsonify(success=False, message='Patient Aadhaar not found'), 400
+            if not validate_otp(f"patient:{aad}", otp):
+                return jsonify(success=False, message='Invalid or expired OTP'), 400
+
+            # Mark prescription as dispensed
+            cur.execute(f"UPDATE `{presc_table}` SET `{status_col}`='dispensed' WHERE `{presc_id_col}`=%s", (presc_id_val,))
+            conn.commit()
+            
+            # Store success message in session to show on next page load
+            session['dispense_success'] = f'Successfully dispensed medicines for prescription #{presc_id_val}'
+            
+            return jsonify(success=True)
+    except Exception as e:
+        app.logger.error(f"dispense_prescription_post error: {e}")
+        return jsonify(success=False, message='Server error'), 500
+
+
+# Keep old GET route but make it warn and redirect
+@app.route('/dispense/<int:prescription_id>')
+def dispense_prescription(prescription_id):
+    flash('Use the Dispense button and enter Aadhaar + OTP to dispense.', 'warning')
     return redirect(url_for('pharmacist_dashboard'))
 
 

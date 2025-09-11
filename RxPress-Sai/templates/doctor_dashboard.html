@@ -77,7 +77,7 @@
                             {% for prescription in prescriptions %}
                             <tr>
                                 <td>{{ prescription.patient_name }}</td>
-                                <td>{{ prescription.created_date.strftime('%d/%m/%Y') if prescription.created_date else 'N/A' }}</td>
+                                <td>{{ prescription.created_date[:10] if prescription.created_date else 'N/A' }}</td>
                                 <td>
                                     <small>{{ prescription.medicines[:50] if prescription.medicines else 'No medicines' }}{% if prescription.medicines and prescription.medicines|length > 50 %}...{% endif %}</small>
                                 </td>
