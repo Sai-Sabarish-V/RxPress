@@ -1,0 +1,294 @@
+{% extends "base.html" %}
+
+{% block title %}RxPress - Login{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center">
+    <div class="col-md-6">
+        <div class="card">
+            <div class="card-header text-center">
+                <h4 class="mb-0"><i class="fas fa-sign-in-alt me-2"></i>Login to RxPress</h4>
+            </div>
+            <div class="card-body">
+                <form method="POST" id="loginForm">
+                    <!-- Role Selection -->
+                    <div class="mb-4">
+                        <label class="form-label fw-bold">Select Your Role:</label>
+                        <div class="row text-center">
+                            <div class="col-4">
+                                <input type="radio" class="btn-check" name="user_type" id="doctor" value="doctors" autocomplete="off" required>
+                                <label class="btn btn-outline-primary w-100" for="doctor">
+                                    <i class="fas fa-user-md d-block mb-2"></i>
+                                    Doctor
+                                </label>
+                            </div>
+                            <div class="col-4">
+                                <input type="radio" class="btn-check" name="user_type" id="patient" value="patients" autocomplete="off" required>
+                                <label class="btn btn-outline-primary w-100" for="patient">
+                                    <i class="fas fa-user d-block mb-2"></i>
+                                    Patient
+                                </label>
+                            </div>
+                            <div class="col-4">
+                                <input type="radio" class="btn-check" name="user_type" id="pharmacist" value="pharmacists" autocomplete="off" required>
+                                <label class="btn btn-outline-primary w-100" for="pharmacist">
+                                    <i class="fas fa-pills d-block mb-2"></i>
+                                    Pharmacist
+                                </label>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Dynamic Auth Info -->
+                    <div class="alert alert-success mb-3" id="authInfo">
+                        <h6><i class="fas fa-database me-2"></i>Live Database Connected</h6>
+                        <small>Select your role to see login requirements</small>
+                    </div>
+
+                    <!-- Username Field -->
+                    <div class="mb-3">
+                        <label for="username" class="form-label" id="usernameLabel">Username</label>
+                        <div class="input-group">
+                            <span class="input-group-text"><i class="fas fa-user" id="usernameIcon"></i></span>
+                            <input type="text" class="form-control" id="username" name="username"
+                                   placeholder="Select role first" required disabled>
+                            <button type="button" class="btn btn-outline-success" id="generateOtpBtn" style="display: none;" disabled>
+                                Generate OTP
+                            </button>
+                        </div>
+                        <div class="form-text" id="usernameHelp">Select your role to see requirements</div>
+                    </div>
+
+                    <!-- OTP Display -->
+                    <div class="mb-3" id="otpDisplay" style="display: none;">
+                        <div class="alert alert-success">
+                            <i class="fas fa-sms me-2"></i>Your OTP: <strong id="generatedOtp"></strong>
+                            <small class="d-block mt-1">In production, this would be sent via SMS</small>
+                        </div>
+                    </div>
+
+                    <!-- Password/OTP Field -->
+                    <div class="mb-3">
+                        <label for="password_or_otp" class="form-label" id="passwordLabel">Password/OTP</label>
+                        <div class="input-group">
+                            <span class="input-group-text"><i class="fas fa-key" id="passwordIcon"></i></span>
+                            <input type="password" class="form-control" id="password_or_otp" name="password_or_otp"
+                                   placeholder="Select role first" required disabled>
+                        </div>
+                        <div class="form-text" id="passwordHelp">Select your role to see requirements</div>
+                    </div>
+
+                    <!-- Login Button -->
+                    <div class="d-grid">
+                        <button type="submit" class="btn btn-primary btn-lg" id="loginBtn" disabled>
+                            <i class="fas fa-sign-in-alt me-2"></i>Login
+                        </button>
+                    </div>
+                </form>
+            </div>
+            <div class="card-footer text-center text-muted">
+                <small>Secure authentication • <a href="/test_db" target="_blank">Test Database Connection</a></small>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+$(document).ready(function() {
+    // Handle role selection change
+    $('input[name="user_type"]').change(function() {
+        const userType = $(this).val();
+        updateFormForUserType(userType);
+        resetForm();
+    });
+
+    function updateFormForUserType(userType) {
+        // Enable form fields
+        $('#username, #password_or_otp, #loginBtn').prop('disabled', false);
+
+        if (userType === 'doctors') {
+            // Doctor login: registration_no + password
+            $('#usernameLabel').text('Registration Number');
+            $('#usernameIcon').removeClass().addClass('fas fa-id-badge');
+            $('#username').attr('placeholder', 'Enter your registration number (e.g., REGD1001)');
+            $('#usernameHelp').text('Enter your doctor registration number');
+            $('#username').removeAttr('maxlength');
+
+            $('#passwordLabel').text('Password');
+            $('#passwordIcon').removeClass().addClass('fas fa-lock');
+            $('#password_or_otp').attr('placeholder', 'Enter your password');
+            $('#password_or_otp').attr('type', 'password');
+            $('#password_or_otp').removeAttr('maxlength');
+            $('#passwordHelp').text('Enter your password');
+
+            $('#generateOtpBtn').hide();
+            $('#otpDisplay').hide();
+            $('#authInfo').html('<h6><i class="fas fa-user-md me-2"></i>Doctor Login</h6><small>Login with Registration Number + Password<br>No OTP required</small>');
+
+        } else if (userType === 'patients') {
+            // Patient login: aadhaar_no + OTP
+            $('#usernameLabel').text('Aadhaar Number');
+            $('#usernameIcon').removeClass().addClass('fas fa-id-card');
+            $('#username').attr('placeholder', 'Enter 12-digit Aadhaar number (e.g., 735916401477)');
+            $('#username').attr('maxlength', '12');
+            $('#usernameHelp').text('Enter exactly 12 digits');
+
+            $('#passwordLabel').text('OTP');
+            $('#passwordIcon').removeClass().addClass('fas fa-key');
+            $('#password_or_otp').attr('placeholder', 'Enter 6-digit OTP');
+            $('#password_or_otp').attr('type', 'text');
+            $('#password_or_otp').attr('maxlength', '6');
+            $('#passwordHelp').text('Generate and enter the 6-digit OTP');
+
+            $('#generateOtpBtn').show();
+            $('#authInfo').html('<h6><i class="fas fa-user me-2"></i>Patient Login</h6><small>Login with Aadhaar Number + OTP<br>Generate OTP after entering Aadhaar</small>');
+
+        } else if (userType === 'pharmacists') {
+            // Pharmacist login: license_no + OTP
+            $('#usernameLabel').text('License Number');
+            $('#usernameIcon').removeClass().addClass('fas fa-certificate');
+            $('#username').attr('placeholder', 'Enter license number (e.g., PHARM/IN/10001)');
+            $('#username').removeAttr('maxlength');
+            $('#usernameHelp').text('Enter your pharmacist license number');
+
+            $('#passwordLabel').text('OTP');
+            $('#passwordIcon').removeClass().addClass('fas fa-key');
+            $('#password_or_otp').attr('placeholder', 'Enter 6-digit OTP');
+            $('#password_or_otp').attr('type', 'text');
+            $('#password_or_otp').attr('maxlength', '6');
+            $('#passwordHelp').text('Generate and enter the 6-digit OTP');
+
+            $('#generateOtpBtn').show();
+            $('#authInfo').html('<h6><i class="fas fa-pills me-2"></i>Pharmacist Login</h6><small>Login with License Number + OTP<br>Generate OTP after entering license number</small>');
+        }
+    }
+
+    function resetForm() {
+        $('#username, #password_or_otp').val('');
+        $('#otpDisplay').hide();
+        $('#generateOtpBtn').text('Generate OTP').prop('disabled', false);
+    }
+
+    // Enable OTP button when username is entered for patients/pharmacists
+    $('#username').on('input', function() {
+        const userType = $('input[name="user_type"]:checked').val();
+        const username = $(this).val();
+
+        if (userType === 'patients') {
+            // Format as numbers only
+            let value = username.replace(/\D/g, '');
+            if (value.length <= 12) {
+                $(this).val(value);
+            }
+            // Enable OTP button when 12 digits entered
+            if (value.length === 12) {
+                $('#generateOtpBtn').prop('disabled', false);
+            } else {
+                $('#generateOtpBtn').prop('disabled', true);
+            }
+        } else if (userType === 'pharmacists') {
+            // Enable OTP button when license number entered
+            if (username.length > 0) {
+                $('#generateOtpBtn').prop('disabled', false);
+            } else {
+                $('#generateOtpBtn').prop('disabled', true);
+            }
+        }
+    });
+
+    // Format OTP input for patients and pharmacists
+    $('#password_or_otp').on('input', function() {
+        const userType = $('input[name="user_type"]:checked').val();
+        if (userType === 'patients' || userType === 'pharmacists') {
+            let value = $(this).val().replace(/\D/g, '');
+            if (value.length <= 6) {
+                $(this).val(value);
+            }
+        }
+    });
+
+    // Generate OTP
+    $('#generateOtpBtn').click(function() {
+        const userType = $('input[name="user_type"]:checked').val();
+        const username = $('#username').val();
+
+        if (userType === 'patients' && (!username || username.length !== 12)) {
+            alert('Please enter exactly 12 digits for Aadhaar number');
+            return;
+        }
+
+        if (userType === 'pharmacists' && !username) {
+            alert('Please enter your license number');
+            return;
+        }
+
+        $(this).text('Generating...').prop('disabled', true);
+
+        $.post('/generate_otp', {user_type: userType, username: username})
+        .done(function(response) {
+            if (response.success) {
+                $('#generatedOtp').text(response.otp);
+                $('#otpDisplay').show();
+                $('#generateOtpBtn').text('OTP Generated').addClass('btn-success').removeClass('btn-outline-success');
+                $('#password_or_otp').focus();
+            } else {
+                alert(response.message);
+                $('#generateOtpBtn').text('Generate OTP').prop('disabled', false);
+            }
+        })
+        .fail(function() {
+            alert('Failed to generate OTP. Please try again.');
+            $('#generateOtpBtn').text('Generate OTP').prop('disabled', false);
+        });
+    });
+
+    // Form validation
+    $('#loginForm').submit(function(e) {
+        const userType = $('input[name="user_type"]:checked').val();
+        const username = $('#username').val();
+        const passwordOrOtp = $('#password_or_otp').val();
+
+        if (!userType) {
+            e.preventDefault();
+            alert('Please select your role');
+            return;
+        }
+
+        if (userType === 'patients') {
+            if (username.length !== 12) {
+                e.preventDefault();
+                alert('Aadhaar number must be exactly 12 digits');
+                return;
+            }
+            if (passwordOrOtp.length !== 6) {
+                e.preventDefault();
+                alert('OTP must be exactly 6 digits');
+                return;
+            }
+        } else if (userType === 'pharmacists') {
+            if (!username) {
+                e.preventDefault();
+                alert('License number is required');
+                return;
+            }
+            if (passwordOrOtp.length !== 6) {
+                e.preventDefault();
+                alert('OTP must be exactly 6 digits');
+                return;
+            }
+        } else if (userType === 'doctors') {
+            if (!username || !passwordOrOtp) {
+                e.preventDefault();
+                alert('Registration number and password are required');
+                return;
+            }
+        }
+
+        // Show loading state
+        $('#loginBtn').html('<i class="fas fa-spinner fa-spin me-2"></i>Logging in...').prop('disabled', true);
+    });
+});
+</script>
+{% endblock %}

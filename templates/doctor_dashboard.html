@@ -1,0 +1,149 @@
+{% extends "base.html" %}
+
+{% block title %}Doctor Dashboard - RxPress{% endblock %}
+
+{% block content %}
+<div class="row">
+    <div class="col-md-6">
+        <!-- Create Prescription Form -->
+        <div class="card mb-4">
+            <div class="card-header">
+                <h5 class="mb-0"><i class="fas fa-prescription-bottle-alt me-2"></i>Create New Prescription</h5>
+            </div>
+            <div class="card-body">
+                <form method="POST" action="{{ url_for('create_prescription') }}">
+                    <div class="mb-3">
+                        <label for="patient_id" class="form-label">Patient ID/Name</label>
+                        <input type="number" class="form-control" id="patient_id" name="patient_id"
+                               placeholder="Enter Patient ID" required>
+                    </div>
+
+                    <div id="medicineContainer">
+                        <div class="medicine-row mb-3">
+                            <label class="form-label">Medicine Details</label>
+                            <div class="row">
+                                <div class="col-5">
+                                    <select class="form-select" name="medicines[]" required>
+                                        <option value="">Select Medicine</option>
+                                        {% for medicine in medicines %}
+                                        <option value="{{ medicine.id }}">{{ medicine.brand_name or medicine.name }}</option>
+                                        {% endfor %}
+                                    </select>
+                                </div>
+                                <div class="col-3">
+                                    <input type="text" class="form-control" name="dosages[]"
+                                           placeholder="Dosage" required>
+                                </div>
+                                <div class="col-4">
+                                    <input type="text" class="form-control" name="durations[]"
+                                           placeholder="Duration" required>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <button type="button" class="btn btn-outline-primary btn-sm mb-3" id="addMedicine">
+                        <i class="fas fa-plus me-1"></i>Add Medicine
+                    </button>
+
+                    <div class="d-grid">
+                        <button type="submit" class="btn btn-primary">
+                            <i class="fas fa-paper-plane me-2"></i>Create Prescription
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <div class="col-md-6">
+        <!-- My Prescriptions -->
+        <div class="card">
+            <div class="card-header">
+                <h5 class="mb-0"><i class="fas fa-list me-2"></i>My Prescriptions</h5>
+            </div>
+            <div class="card-body">
+                <div class="table-responsive">
+                    <table class="table table-striped">
+                        <thead>
+                            <tr>
+                                <th>Patient</th>
+                                <th>Date</th>
+                                <th>Medicines</th>
+                                <th>Status</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for prescription in prescriptions %}
+                            <tr>
+                                <td>{{ prescription.patient_name }}</td>
+                                <td>{{ prescription.created_date.strftime('%d/%m/%Y') if prescription.created_date else 'N/A' }}</td>
+                                <td>
+                                    <small>{{ prescription.medicines[:50] if prescription.medicines else 'No medicines' }}{% if prescription.medicines and prescription.medicines|length > 50 %}...{% endif %}</small>
+                                </td>
+                                <td>
+                                    {% if prescription.status == 'Pending' %}
+                                        <span class="badge badge-pending">Pending</span>
+                                    {% else %}
+                                        <span class="badge badge-dispensed">Dispensed</span>
+                                    {% endif %}
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                    {% if not prescriptions %}
+                    <div class="text-center text-muted py-4">
+                        <i class="fas fa-prescription-bottle-alt fa-3x mb-3"></i>
+                        <p>No prescriptions created yet</p>
+                    </div>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+$(document).ready(function() {
+    $('#addMedicine').click(function() {
+        const medicineOptions = `
+            <option value="">Select Medicine</option>
+            {% for medicine in medicines %}
+            <option value="{{ medicine.id }}">{{ medicine.brand_name or medicine.name }}</option>
+            {% endfor %}
+        `;
+
+        const medicineRow = `
+            <div class="medicine-row mb-3">
+                <div class="row">
+                    <div class="col-5">
+                        <select class="form-select" name="medicines[]" required>
+                            ${medicineOptions}
+                        </select>
+                    </div>
+                    <div class="col-3">
+                        <input type="text" class="form-control" name="dosages[]" placeholder="Dosage" required>
+                    </div>
+                    <div class="col-3">
+                        <input type="text" class="form-control" name="durations[]" placeholder="Duration" required>
+                    </div>
+                    <div class="col-1">
+                        <button type="button" class="btn btn-outline-danger btn-sm remove-medicine">
+                            <i class="fas fa-trash"></i>
+                        </button>
+                    </div>
+                </div>
+            </div>
+        `;
+        $('#medicineContainer').append(medicineRow);
+    });
+
+    $(document).on('click', '.remove-medicine', function() {
+        $(this).closest('.medicine-row').remove();
+    });
+});
+</script>
+{% endblock %}
