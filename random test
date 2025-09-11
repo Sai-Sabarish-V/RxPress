@@ -1,0 +1,25 @@
+# save as test_db_connect.py and run: python test_db_connect.py
+import socket, os
+from config import get_database_config
+
+cfg = get_database_config()
+host = cfg.get("host")
+port = cfg.get("port")
+ssl_ca = cfg.get("ssl_ca")
+
+print("Host from config:", host)
+print("Port from config:", port)
+print("SSL CA path from config:", ssl_ca)
+
+# 1) DNS resolution
+try:
+    ip = socket.gethostbyname(host)
+    print("DNS OK — host resolves to:", ip)
+except Exception as e:
+    print("DNS resolution FAILED:", repr(e))
+
+# 2) Check CA file exists (if provided)
+if ssl_ca:
+    print("ssl_ca exists?:", os.path.exists(ssl_ca))
+else:
+    print("No ssl_ca provided in config.")

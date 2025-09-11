@@ -1,0 +1,96 @@
+{% extends 'base.html' %}
+{% block content %}
+<h3>Pharmacist Dashboard</h3>
+<div class="row g-4">
+  <div class="col-12">
+    <div class="card">
+      <div class="card-header">Pending Prescriptions</div>
+      <div class="card-body">
+        <div class="table-responsive">
+          <table class="table table-striped align-middle">
+            <thead>
+              <tr>
+                <th>ID</th>
+                <th>Patient</th>
+                <th>Doctor</th>
+                <th>Medicines</th>
+                <th>Action</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for p in pending %}
+              <tr>
+                <td>#{{ p.id }}</td>
+                <td>{{ p.patient_name }}</td>
+                <td>{{ p.doctor_name }}</td>
+                <td>{{ p.med_list }}</td>
+                <td>
+                  <form method="post" action="{{ url_for('dispense') }}">
+                    <input type="hidden" name="prescription_id" value="{{ p.id }}">
+                    <button class="btn btn-sm btn-success" type="submit">Dispense</button>
+                  </form>
+                </td>
+              </tr>
+              {% else %}
+              <tr><td colspan="5" class="text-center text-muted">No pending prescriptions.</td></tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="col-md-6">
+    <div class="card">
+      <div class="card-header">Stock Management</div>
+      <div class="card-body">
+        <form class="row g-3" method="post" action="{{ url_for('update_stock') }}">
+          <div class="col-md-5">
+            <label class="form-label">Medicine</label>
+            <select class="form-select" name="medicine_id">
+              {% for m in medicines %}
+              <option value="{{ m.id }}">{{ m.name }}</option>
+              {% endfor %}
+            </select>
+          </div>
+          <div class="col-md-3">
+            <label class="form-label">Qty</label>
+            <input type="number" class="form-control" name="quantity" min="0" value="0">
+          </div>
+          <div class="col-md-4">
+            <label class="form-label">Expiry</label>
+            <input type="date" class="form-control" name="expiry">
+          </div>
+          <div class="col-12">
+            <button class="btn btn-primary" type="submit">Add/Update</button>
+          </div>
+        </form>
+        <hr>
+        <div class="table-responsive">
+          <table class="table table-sm">
+            <thead>
+              <tr>
+                <th>Medicine</th>
+                <th>Qty</th>
+                <th>Expiry</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for s in stock %}
+              <tr>
+                <td>{{ s.medicine }}</td>
+                <td>{{ s.quantity }}</td>
+                <td>{{ s.expiry }}</td>
+              </tr>
+              {% else %}
+              <tr><td colspan="3" class="text-center text-muted">No stock.</td></tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

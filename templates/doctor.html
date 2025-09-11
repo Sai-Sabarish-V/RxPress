@@ -1,0 +1,77 @@
+{% extends 'base.html' %}
+{% block content %}
+<h3>Doctor Dashboard</h3>
+<div class="row g-4">
+  <div class="col-md-5">
+    <div class="card">
+      <div class="card-header">Create Prescription</div>
+      <div class="card-body">
+        <form method="post" action="{{ url_for('create_prescription') }}">
+          <div class="mb-3">
+            <label class="form-label">Patient Registration No / ID</label>
+            <input type="text" class="form-control" name="patient" required>
+          </div>
+          <div class="mb-3">
+            <label class="form-label">Medicine</label>
+            <select class="form-select" name="medicine_id" required>
+              {% for m in medicines %}
+              <option value="{{ m.med_id }}">{{ m.brand_name }}</option>
+              {% endfor %}
+            </select>
+          </div>
+          <div class="mb-3">
+            <label class="form-label">Dose</label>
+            <input type="text" class="form-control" name="dose" placeholder="e.g., 500mg" required>
+          </div>
+          <div class="mb-3">
+            <label class="form-label">Frequency</label>
+            <input type="text" class="form-control" name="frequency" placeholder="e.g., 2 times/day" required>
+          </div>
+          <div class="mb-3">
+            <label class="form-label">Duration (days)</label>
+            <input type="number" class="form-control" name="duration_days" min="1" value="7" required>
+          </div>
+          <div class="mb-3">
+            <label class="form-label">Quantity Required</label>
+            <input type="number" class="form-control" name="qty_required" min="1" value="1" required>
+          </div>
+          <button class="btn btn-primary" type="submit">Submit</button>
+        </form>
+      </div>
+    </div>
+  </div>
+  <div class="col-md-7">
+    <div class="card">
+      <div class="card-header">My Prescriptions</div>
+      <div class="card-body">
+        <div class="table-responsive">
+          <table class="table table-striped align-middle">
+            <thead>
+              <tr>
+                <th>Patient</th>
+                <th>Date</th>
+                <th>Medicines</th>
+                <th>Status</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for p in prescriptions %}
+              <tr>
+                <td>{{ p.patient_name }}</td>
+                <td>{{ p.created_at }}</td>
+                <td>{{ p.med_list }}</td>
+                <td>
+                  <span class="badge bg-{{ 'success' if p.status in ['dispensed','partially_dispensed'] else 'secondary' }}">{{ p.status }}</span>
+                </td>
+              </tr>
+              {% else %}
+              <tr><td colspan="4" class="text-center text-muted">No prescriptions yet.</td></tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
