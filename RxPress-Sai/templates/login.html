@@ -1,0 +1,217 @@
+{% extends 'base.html' %}
+{% block title %}Login • RxPress{% endblock %}
+{% block content %}
+<div class="row justify-content-center">
+  <div class="col-lg-6 col-md-8">
+    <div class="card shadow-sm border-0">
+      <div class="card-header bg-white border-0 text-center py-4">
+        <h4 class="mb-0" style="color:var(--primary-green); font-weight:600;">
+          <i class="fas fa-unlock-alt me-2"></i>Access RxPress
+        </h4>
+        <small class="text-muted">Choose your role and authenticate</small>
+      </div>
+      <div class="card-body pt-0">
+        <form id="loginForm" method="POST" novalidate>
+          <!-- Role Selection -->
+          <div class="mb-4">
+            <label class="form-label fw-semibold">Select Role</label>
+            <div class="d-flex gap-2">
+              <input type="radio" class="btn-check" name="user_type" id="roleDoctor" value="doctors" autocomplete="off" required>
+              <label class="btn btn-outline-primary flex-fill" for="roleDoctor">
+                <i class="fas fa-user-md d-block mb-1"></i>Doctor
+              </label>
+              <input type="radio" class="btn-check" name="user_type" id="rolePatient" value="patients" autocomplete="off" required>
+              <label class="btn btn-outline-primary flex-fill" for="rolePatient">
+                <i class="fas fa-user d-block mb-1"></i>Patient
+              </label>
+              <input type="radio" class="btn-check" name="user_type" id="rolePharmacist" value="pharmacists" autocomplete="off" required>
+              <label class="btn btn-outline-primary flex-fill" for="rolePharmacist">
+                <i class="fas fa-pills d-block mb-1"></i>Pharmacist
+              </label>
+            </div>
+          </div>
+
+          <!-- Dynamic Username Field -->
+          <div class="mb-3" id="groupUsername" style="display:none;">
+            <label id="labelUsername" class="form-label fw-semibold">Identifier</label>
+            <div class="input-group">
+              <span class="input-group-text" id="iconUsername"><i class="fas fa-id-card"></i></span>
+              <input type="text" class="form-control" id="username" name="username" placeholder="Select a role first" disabled required>
+              <button type="button" id="btnOtp" class="btn btn-outline-success" style="display:none;" disabled>Generate OTP</button>
+            </div>
+            <div class="form-text" id="helpUsername"></div>
+          </div>
+
+          <!-- OTP Display (for patients / pharmacists) -->
+          <div class="mb-3" id="otpReveal" style="display:none;">
+            <div class="alert alert-success py-2 px-3 mb-0">
+              <small class="d-block">OTP Generated</small>
+              <strong id="otpValue"></strong>
+              <small class="d-block text-muted">(Shown here for demo; would be sent via SMS)</small>
+            </div>
+          </div>
+
+          <!-- Password or OTP Field -->
+            <div class="mb-4" id="groupSecret" style="display:none;">
+              <label id="labelSecret" class="form-label fw-semibold">Secret</label>
+              <div class="input-group">
+                <span class="input-group-text" id="iconSecret"><i class="fas fa-key"></i></span>
+                <input type="password" class="form-control" id="password_or_otp" name="password_or_otp" placeholder="Enter your password" disabled required>
+              </div>
+              <div class="form-text" id="helpSecret"></div>
+            </div>
+
+          <!-- Submit -->
+          <div class="d-grid">
+            <button type="submit" id="btnLogin" class="btn btn-primary btn-lg" disabled>
+              <i class="fas fa-sign-in-alt me-2"></i>Login
+            </button>
+          </div>
+        </form>
+      </div>
+      <div class="card-footer bg-white text-center small text-muted py-3">
+        Live DB: rxpress • Need help? Contact admin
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+(function() {
+  const roleRadios = document.querySelectorAll('input[name="user_type"]');
+  const username = document.getElementById('username');
+  const passwordOrOtp = document.getElementById('password_or_otp');
+  const btnOtp = document.getElementById('btnOtp');
+  const btnLogin = document.getElementById('btnLogin');
+  const groupUsername = document.getElementById('groupUsername');
+  const groupSecret = document.getElementById('groupSecret');
+  const otpReveal = document.getElementById('otpReveal');
+  const otpValue = document.getElementById('otpValue');
+  const labelUsername = document.getElementById('labelUsername');
+  const labelSecret = document.getElementById('labelSecret');
+  const helpUsername = document.getElementById('helpUsername');
+  const helpSecret = document.getElementById('helpSecret');
+  const iconUsername = document.getElementById('iconUsername');
+  const iconSecret = document.getElementById('iconSecret');
+  const form = document.getElementById('loginForm');
+
+  function resetDynamic() {
+    username.value=''; passwordOrOtp.value='';
+    username.disabled = true; passwordOrOtp.disabled = true;
+    btnOtp.style.display='none'; btnOtp.disabled = true;
+    btnLogin.disabled = true; otpReveal.style.display='none';
+    otpValue.textContent='';
+  }
+
+  function configureFor(role) {
+    groupUsername.style.display='block';
+    groupSecret.style.display='block';
+    username.disabled = false; passwordOrOtp.disabled = false;
+    passwordOrOtp.type='password';
+    btnLogin.disabled = false;
+
+    if (role === 'doctors') {
+      labelUsername.textContent='Registration Number';
+      labelSecret.textContent='Password';
+      username.placeholder='e.g. REGD1001';
+      helpUsername.textContent='Enter your official registration number.';
+      helpSecret.textContent='Use your assigned password.';
+      iconUsername.innerHTML='<i class="fas fa-id-badge"></i>';
+      iconSecret.innerHTML='<i class="fas fa-lock"></i>';
+      passwordOrOtp.placeholder='Enter Your Password';
+      btnOtp.style.display='none';
+    } else if (role === 'patients') {
+      labelUsername.textContent='Aadhaar Number';
+      labelSecret.textContent='OTP';
+      username.placeholder='12-digit Aadhaar';
+      username.maxLength=12;
+      helpUsername.textContent='Exactly 12 digits; numbers only.';
+      helpSecret.textContent='Enter the 6-digit OTP after generating.';
+      iconUsername.innerHTML='<i class="fas fa-id-card"></i>';
+      iconSecret.innerHTML='<i class="fas fa-key"></i>';
+      passwordOrOtp.type='text';
+      passwordOrOtp.placeholder='Enter 6-digit OTP';
+      btnOtp.style.display='inline-block';
+      btnOtp.disabled = true; // enable once length=12
+    } else if (role === 'pharmacists') {
+      labelUsername.textContent='License Number';
+      labelSecret.textContent='OTP';
+      username.placeholder='e.g. PHARM/IN/10001';
+      username.removeAttribute('maxLength');
+      helpUsername.textContent='Enter your valid license number.';
+      helpSecret.textContent='Enter the 6-digit OTP after generating.';
+      iconUsername.innerHTML='<i class="fas fa-certificate"></i>';
+      iconSecret.innerHTML='<i class="fas fa-key"></i>';
+      passwordOrOtp.type='text';
+      passwordOrOtp.placeholder='6-digit OTP';
+      btnOtp.style.display='inline-block';
+      btnOtp.disabled = true; // enable once non-empty
+    }
+  }
+
+  roleRadios.forEach(r => r.addEventListener('change', e => {
+    resetDynamic();
+    configureFor(e.target.value);
+  }));
+
+  username.addEventListener('input', () => {
+    const role = document.querySelector('input[name="user_type"]:checked')?.value;
+    if (!role) return;
+    if (role === 'patients') {
+      username.value = username.value.replace(/\D/g,'').slice(0,12);
+      btnOtp.disabled = username.value.length !== 12;
+      if (username.value.length !== 12) otpReveal.style.display='none';
+    } else if (role === 'pharmacists') {
+      btnOtp.disabled = username.value.trim().length === 0;
+      if (username.value.trim().length === 0) otpReveal.style.display='none';
+    }
+  });
+
+  btnOtp.addEventListener('click', () => {
+    const role = document.querySelector('input[name="user_type"]:checked')?.value;
+    if (!role) return;
+    btnOtp.disabled = true; btnOtp.textContent='Generating...';
+    fetch('/generate_otp', {
+      method:'POST',
+      headers:{'Content-Type':'application/x-www-form-urlencoded'},
+      body:new URLSearchParams({user_type: role, username: username.value.trim()})
+    }).then(r=>r.json()).then(data => {
+      if (data.success) {
+        otpValue.textContent = data.otp;
+        otpReveal.style.display='block';
+        passwordOrOtp.disabled = false;
+        btnOtp.textContent='OTP Generated';
+      } else {
+        alert(data.message || 'Failed to generate OTP');
+        btnOtp.textContent='Generate OTP';
+        btnOtp.disabled = false;
+      }
+    }).catch(()=>{
+      alert('Network error generating OTP');
+      btnOtp.textContent='Generate OTP';
+      btnOtp.disabled = false;
+    });
+  });
+
+  form.addEventListener('submit', (e) => {
+    const role = document.querySelector('input[name="user_type"]:checked')?.value;
+    if (!role) { e.preventDefault(); return; }
+    const u = username.value.trim();
+    const s = passwordOrOtp.value.trim();
+    if (role === 'doctors') {
+      if (!u || !s) { e.preventDefault(); alert('Enter registration number and password.'); }
+    } else if (role === 'patients') {
+      if (u.length !== 12 || !/^\d{12}$/.test(u)) { e.preventDefault(); alert('Aadhaar must be 12 digits.'); return; }
+      if (!/^\d{6}$/.test(s)) { e.preventDefault(); alert('OTP must be 6 digits.'); return; }
+    } else if (role === 'pharmacists') {
+      if (!u) { e.preventDefault(); alert('Enter license number.'); return; }
+      if (!/^\d{6}$/.test(s)) { e.preventDefault(); alert('OTP must be 6 digits.'); return; }
+    }
+    btnLogin.disabled = true;
+    btnLogin.innerHTML = '<i class="fas fa-spinner fa-spin me-2"></i>Authenticating...';
+  });
+})();
+</script>
+{% endblock %}

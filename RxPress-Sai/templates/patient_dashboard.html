@@ -1,0 +1,172 @@
+{% extends "base.html" %}
+
+{% block title %}Patient Dashboard - RxPress{% endblock %}
+
+{% block content %}
+<div class="row">
+    <div class="col-md-8">
+        <!-- My Prescriptions -->
+        <div class="card mb-4">
+            <div class="card-header">
+                <h5 class="mb-0"><i class="fas fa-prescription me-2"></i>My Prescriptions</h5>
+            </div>
+            <div class="card-body">
+                <div class="table-responsive">
+                    <table class="table table-striped">
+                        <thead>
+                            <tr>
+                                <th>Prescription ID</th>
+                                <th>Doctor</th>
+                                <th>Date</th>
+                                <th>Medicines</th>
+                                <th>Status</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for prescription in prescriptions %}
+                            <tr>
+                                <td>#{{ prescription.id }}</td>
+                                <td>{{ prescription.doctor_name }}</td>
+                                <td>{{ prescription.created_date.strftime('%d/%m/%Y') }}</td>
+                                <td>
+                                    <small>{{ prescription.medicines[:50] }}{% if prescription.medicines|length > 50 %}...{% endif %}</small>
+                                </td>
+                                <td>
+                                    {% if prescription.status == 'Pending' %}
+                                        <span class="badge badge-pending">Pending</span>
+                                    {% else %}
+                                        <span class="badge badge-dispensed">Dispensed</span>
+                                    {% endif %}
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                    {% if not prescriptions %}
+                    <div class="text-center text-muted py-4">
+                        <i class="fas fa-prescription fa-3x mb-3"></i>
+                        <p>No prescriptions found</p>
+                        <small>Visit your doctor to get prescriptions</small>
+                    </div>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="col-md-4">
+        <!-- Find Nearest Pharmacy -->
+        <div class="card">
+            <div class="card-header">
+                <h5 class="mb-0"><i class="fas fa-map-marker-alt me-2"></i>Find Nearest Pharmacy</h5>
+            </div>
+            <div class="card-body">
+                <form id="pharmacySearchForm">
+                    <div class="mb-3">
+                        <label for="location" class="form-label">Your Location</label>
+                        <input type="text" class="form-control" id="location" name="location"
+                               placeholder="Enter village/city name" required>
+                    </div>
+                    <div class="d-grid">
+                        <button type="submit" class="btn btn-primary">
+                            <i class="fas fa-search me-2"></i>Search Pharmacies
+                        </button>
+                    </div>
+                </form>
+
+                <!-- Pharmacy Results -->
+                <div id="pharmacyResults" class="mt-4" style="display: none;">
+                    <h6 class="text-success mb-3">
+                        <i class="fas fa-store me-2"></i>Available Pharmacies
+                    </h6>
+                    <div id="pharmacyList"></div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Quick Actions -->
+        <div class="card mt-4">
+            <div class="card-header">
+                <h6 class="mb-0"><i class="fas fa-bolt me-2"></i>Quick Actions</h6>
+            </div>
+            <div class="card-body">
+                <div class="d-grid gap-2">
+                    <button class="btn btn-outline-primary btn-sm" onclick="window.print()">
+                        <i class="fas fa-print me-2"></i>Print Prescriptions
+                    </button>
+                    <button class="btn btn-outline-primary btn-sm" id="downloadPdf">
+                        <i class="fas fa-download me-2"></i>Download as PDF
+                    </button>
+                    <button class="btn btn-outline-primary btn-sm" onclick="location.reload()">
+                        <i class="fas fa-sync me-2"></i>Refresh
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+$(document).ready(function() {
+    // Pharmacy search
+    $('#pharmacySearchForm').submit(function(e) {
+        e.preventDefault();
+        const location = $('#location').val();
+
+        $.post('/find_pharmacies', {location: location}, function(response) {
+            if (response.success) {
+                displayPharmacies(response.pharmacies);
+            } else {
+                alert(response.message);
+            }
+        });
+    });
+
+    function displayPharmacies(pharmacies) {
+        let html = '';
+
+        if (pharmacies.length === 0) {
+            html = '<div class="text-center text-muted py-3"><small>No pharmacies found</small></div>';
+        } else {
+            pharmacies.forEach(function(pharmacy, index) {
+                html += `
+                    <div class="card mb-2">
+                        <div class="card-body p-3">
+                            <h6 class="card-title mb-1">${pharmacy.pharmacy_name}</h6>
+                            <small class="text-muted d-block mb-2">
+                                <i class="fas fa-user me-1"></i>${pharmacy.name}
+                            </small>
+                            <div class="d-flex justify-content-between align-items-center">
+                                <small class="text-success">
+                                    <i class="fas fa-map-marker-alt me-1"></i>~${Math.floor(Math.random() * 10) + 1} km away
+                                </small>
+                                <button class="btn btn-primary btn-sm reserve-btn"
+                                        data-pharmacy-id="${pharmacy.id}">
+                                    <i class="fas fa-bookmark me-1"></i>Reserve
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                `;
+            });
+        }
+
+        $('#pharmacyList').html(html);
+        $('#pharmacyResults').show();
+    }
+
+    // Reserve medicine at pharmacy
+    $(document).on('click', '.reserve-btn', function() {
+        const pharmacyId = $(this).data('pharmacy-id');
+        alert('Reservation functionality will be implemented soon!');
+    });
+
+    // Download PDF (placeholder)
+    $('#downloadPdf').click(function() {
+        alert('PDF download functionality will be implemented soon!');
+    });
+});
+</script>
+{% endblock %}
